@@ -245,10 +245,13 @@ sub run {
     $self->run_hook('subscription.load');
 
     for my $feed ($self->subscription->feeds) {
-        if (my $sub = $feed->aggregator) {
-            $sub->($self, { feed => $feed });
-            $feed->aggregator(undef); # for cloning
+        # find protocol handler from URIs like script:
+        # Or discover specific feed if site RSS auto discovery is broken
+        my $handler = $self->run_hook_once('feed.discover', { feed => $feed });
+        if ($handler) {
+            $handler->($self, { feed => $feed });
         } else {
+            $self->run_hook_once('feed.fetch', { feed => $feed });
             my $ok = $self->run_hook_once('customfeed.handle', { feed => $feed });
             if (!$ok) {
                 $self->log(error => $feed->url . " is not aggregated by any aggregator");

@@ -7,7 +7,6 @@ use List::Util qw(first);
 use HTML::ResolveLink;
 use HTML::Selector::XPath;
 use HTML::TreeBuilder::XPath;
-use Plagger::UserAgent;
 use Plagger::Util qw( decode_content extract_title );
 use URI::filename;
 
@@ -22,27 +21,24 @@ sub register {
 sub init {
     my $self = shift;
     $self->SUPER::init(@_);
-    $self->load_assets('*.yaml', sub { $self->load_plugin_yaml(@_) });
-
-    $self->{ua} = Plagger::UserAgent->new;
+    $self->load_assets('yaml', sub { $self->load_plugin_yaml(@_) });
 }
 
+sub asset_key { 'find_links' }
+
 sub load_plugin_yaml {
-    my($self, $file, $base) = @_;
+    my($self, $file, $domain) = @_;
 
     Plagger->context->log(debug => "Load YAML $file");
-    my @data = YAML::LoadFile($file);
+    my $data = YAML::LoadFile($file);
 
-    for my $data (@data) {
-        my $plugin = Plagger::Plugin::Filter::FindLinks::YAML->new($data, $base);
-        $self->add_plugin($plugin);
-    }
+    return Plagger::Plugin::Filter::FindLinks::YAML->new($data, $domain);
 }
 
 sub handle {
     my($self, $context, $args) = @_;
 
-    my $handler = $self->plugin_for($args->{feed}->url);
+    my $handler = $self->asset_for($args->{feed}->url);
     if ($handler) {
         $args->{match}    = $handler->follow_link;
         $args->{xpath}    = $handler->follow_xpath;
@@ -68,13 +64,10 @@ sub aggregate {
     my($self, $context, $args) = @_;
 
     my $url = $args->{feed}->url;
-    $context->log(info => "GET $url");
+    my $res = $args->{feed}->source;
 
-    my $agent = Plagger::UserAgent->new;
-    my $res = $agent->fetch($url, $self);
-
-    if ($res->http_response->is_error) {
-        $context->log(error => "GET $url failed: " . $res->status);
+    if (!$res or $res->http_response->is_error) {
+        $context->log(error => "GET $url failed");
         return;
     }
 
@@ -140,7 +133,7 @@ use Encode;
 use List::Util qw(first);
 
 sub new {
-    my($class, $data, $base) = @_;
+    my($class, $data, $domain) = @_;
 
     # add ^ if handle method starts with http://
     for my $key ( qw(handle handle_force) ) {
@@ -148,12 +141,11 @@ sub new {
         $data->{$key} = "^$data->{$key}" if $data->{$key} =~ m!^https?://!;
     }
 
-    bless {%$data, base => $base }, $class;
+    bless {%$data, domain => $domain }, $class;
 }
 
-sub site_name {
-    my $self = shift;
-    $self->{base};
+sub domain {
+    $_[0]->{domain};
 }
 
 sub follow_link {

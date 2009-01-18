@@ -14,7 +14,7 @@ sub register {
     my($self, $context) = @_;
     $context->register_hook(
         $self,
-        'customfeed.handle' => \&handle,
+        'feed.discover' => \&handle,
     );
 }
 
@@ -22,8 +22,7 @@ sub handle {
     my($self, $context, $args) = @_;
 
     if (URI->new($args->{feed}->url)->scheme eq 'script') {
-        $self->aggregate($context, $args);
-        return 1;
+        return sub { $self->aggregate(@_) };
     }
 
     return;
@@ -36,7 +35,7 @@ sub aggregate {
        $script =~ s!^//!!;
     $script = URI::Escape::uri_unescape($script); # to support script://python.exe foo.py
 
-    local $ENV{PATH} = $ENV{PATH} . ":" . $self->assets_dir;
+    local $ENV{PATH} = $ENV{PATH} . ":" . $self->assets_dir($self->plugin_id);
     $context->log(debug => "Executing '$script'");
 
     my $output;

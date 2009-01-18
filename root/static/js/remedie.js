@@ -13,11 +13,6 @@ Remedie.prototype = {
   onPlaybackComplete: null,
 
   initialize: function() {
-    if (!jQuery.browser.safari && !jQuery.browser.mozilla && !jQuery.browser.msie) {
-      alert("Your browser " + navigator.userAgent + " is not supported.");
-      return;
-    }
-
     $().ajaxSend(function(event,xhr,options) {
       xhr.setRequestHeader('X-Remedie-Client', 'Remedie/' + Remedie.version);
     });
@@ -788,14 +783,12 @@ Remedie.prototype = {
 
   showChannel: function(channel) {
     location.href = "#channel/" + channel.id;
-    $.blockUI();
     $.ajax({
       url: "/rpc/channel/show",
       type: 'get',
       data: { id: channel.id },
       dataType: 'json',
       success: function(r) {
-        $.unblockUI();
         $("#channel-pane").children().remove();
         var channel = r.channel;
         $.event.trigger("remedie-channel-ondisplay", channel);
@@ -824,7 +817,7 @@ Remedie.prototype = {
               ],
               'h2', { className: 'channel-header-title' }, [ 'a', { href: channel.props.link, target: "_blank" }, channel.name ],
               'div', { className: 'channel-header-data' }, [
-                'a', { href: channel.ident, target: "_blank" }, RemedieUtil.maskURI(channel.ident).trimChars(100),
+                'a', { href: channel.ident, target: "_blank" }, RemedieUtil.mangleURI(channel.ident).trimChars(100),
                 'br', {}, null,
                 'span', {}, r.items.length + ' items, ' +
                   '<span class="unwatched-count-' + channel.id + '">' + 
@@ -1102,13 +1095,31 @@ Remedie.prototype = {
         ]
       ]
     );
+
+    // TODO Do NOT display items that are not bound to the event: e.g. Cooliris
+    var gridEvents = [];
     $("#channel-" + channel.id)
-      .click( function(){ remedie.showChannel(channel) } )
-      .hover( function(){ $(this).addClass("hover-channel") },
-              function(){ $(this).removeClass("hover-channel") } )
+      .bind( 'click', function(){ remedie.showChannel(channel) } )
+      .hover( function(){
+                $(this).addClass("hover-channel");
+                if (!$(this).data('gridEventsInstalled')) {
+                  var _this = this;
+                  var id = setTimeout(function(){
+                    remedie.installGridEvents($(_this), channel.id);
+                  }, 1000);
+                  gridEvents.push(id);
+                }
+              },
+              function(){
+                $.each(gridEvents, function(idx, id) { clearTimeout(id) });
+                $(this).removeClass("hover-channel");
+                if (!default_thumbnail)
+                  RemedieUtil.layoutImage($("#channel-thumbnail-image-" + channel.id), thumbnail, 192, 192);
+              } )
       .contextMenu("channel-context-menu", {
         bindings: {
           channel_context_refresh:      function(){ remedie.refreshChannel(channel) },
+          channel_context_clear_stale:  function(){ remedie.refreshChannel(channel, false, true) },
           channel_context_mark_watched: function(){ remedie.markAllAsWatched(channel, false) },
           channel_context_remove:       function(){ remedie.removeChannel(channel) }
         }
@@ -1116,6 +1127,37 @@ Remedie.prototype = {
 
     if (!default_thumbnail)
       RemedieUtil.layoutImage($("#channel-thumbnail-image-" + channel.id), thumbnail, 192, 192);
+  },
+
+  installGridEvents: function(element, id) {
+    $.ajax({
+      url: "/rpc/channel/show",
+      type: 'get',
+      data: { id: id },
+      dataType: 'json',
+      success: function(r) {
+        element.data('gridEventsInstalled', true);
+        var images = [];
+        var width = element.width();
+        $.each(r.items, function(index, item) {
+          if (item.props.thumbnail && item.props.thumbnail.url) {
+            images.push(item.props.thumbnail.url);
+          }
+        });
+
+        if (images.length > 0) {
+          var d = 192 / images.length;
+          element.bind('mousemove', function(event) {
+            var offset = $(this).offset({ scroll: false });
+            var x = event.pageX - offset.left;
+            var image = images[parseInt(x / d)];
+            if (image) {
+              RemedieUtil.layoutImage($('#channel-thumbnail-image-' + id), image, 192, 192);
+            }
+          });
+        }
+      },
+    });
   },
 
   cursorPos: -1,

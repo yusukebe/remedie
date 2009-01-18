@@ -1,6 +1,7 @@
 use inc::Module::Install;
 
 name 'Remedie';
+license 'perl';
 all_from 'lib/Remedie.pm';
 
 requires 'Class::Accessor::Fast';
@@ -57,7 +58,10 @@ requires 'URI';
 requires 'URI::Escape';
 requires 'URI::Fetch';
 requires 'URI::QueryParam';
+requires 'Web::Scraper', 0.25;
 requires 'XML::Atom';
+requires 'XML::LibXML';
+requires 'XML::LibXML::Simple';
 requires 'XML::RSS::LibXML';
 requires 'XML::Feed';
 requires 'XML::OPML::LibXML';

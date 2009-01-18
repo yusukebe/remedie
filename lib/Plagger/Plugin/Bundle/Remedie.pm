@@ -18,6 +18,8 @@ sub register {
         },
     });
 
+    $context->load_plugin({ module => 'CustomFeed::Scraper' });
+
     $context->load_plugin({
         module => 'CustomFeed::FindLinks',
         config => {
@@ -27,6 +29,7 @@ sub register {
         },
     });
 
+    $context->load_plugin({ module => 'Discovery::Sites' });
     $context->load_plugin({ module => 'CustomFeed::Script' });
 
     my $thumb_dir = $self->conf->{user_data}->path_to_dir("thumb")->udir;

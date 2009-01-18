@@ -5,6 +5,8 @@ use base qw( Class::Accessor::Fast );
 __PACKAGE__->mk_accessors( qw(conf cache plugins) );
 
 use Plagger::Cookies;
+use Plagger::Util qw( decode_content );
+use Path::Class ();
 
 use FindBin;
 use File::Find::Rule ();
@@ -46,19 +48,19 @@ sub plugin_id {
 
 sub assets_dir {
     my $self = shift;
-    my $context = Plagger->context;
 
-    if ($self->conf->{assets_path}) {
-        return $self->conf->{assets_path}; # look at config:assets_path first
-    }
+    my $context = Plagger->context;
 
     my $assets_base =
         $context->conf->{assets_path} ||              # or global:assets_path
         File::Spec->catfile($FindBin::Bin, "assets"); # or "assets" under plagger script
 
-    return File::Spec->catfile(
-        $assets_base, "plugins", $self->class_id,
-    );
+    return File::Spec->catfile($assets_base, "plugins", @_);
+}
+
+sub asset_key {
+    my $self = shift;
+    return $self->plugin_id;
 }
 
 sub log {
@@ -78,11 +80,10 @@ sub cookie_jar {
 }
 
 sub load_assets {
-    my($self, $rule, $callback) = @_;
+    my($self, $ext, $callback) = @_;
 
-    unless (blessed($rule) && $rule->isa('File::Find::Rule')) {
-        $rule = File::Find::Rule->name($rule)->extras({follow => 1});
-    }
+    my $key  = $self->asset_key;
+    my $rule = File::Find::Rule->name("$key*.$ext")->extras({ follow => 1 });
 
     # ignore .svn directories
     $rule->or(
@@ -92,27 +93,20 @@ sub load_assets {
 
     # $rule isa File::Find::Rule
     for my $file ($rule->in($self->assets_dir)) {
-        my $base = File::Basename::basename($file);
-        $callback->($file, $base);
+        my $domain = (Path::Class::File->new($file)->dir->dir_list)[-1];
+        $domain = '*' if $domain eq 'default';
+        push @{ $self->{assets}->{$domain} }, [ $callback, $file, $domain ]; # delayed load
     }
 }
 
-sub add_plugin {
-    my $self = shift;
-    my($plugin) = @_;
-
-    my $domain = $plugin->{domain} || '*';
-    push @{ $self->{plugins}->{$domain} }, $plugin;
-}
-
-sub plugin_for {
+sub asset_for {
     my $self = shift;
     my($url) = @_;
 
-    return $self->plugins_for($url, 1);
+    return $self->assets_for($url, 1);
 }
 
-sub plugins_for {
+sub assets_for {
     my $self = shift;
     my($url, $first) = @_;
 
@@ -125,22 +119,43 @@ sub plugins_for {
     my @try = map join(".", @domain[$_..$#domain]), 0..$#domain-1;
     push @try, '*';
 
-    my @plugins;
+    my @assets;
     for my $try (@try) {
-        my $plugins = $self->{plugins}->{$try} || [];
-        for my $plugin (@{$plugins}) {
-            my $re   = $plugin->{handle} || ".";
+        my $assets = $self->{assets}->{$try} || [];
+        for my $asset (@{$assets}) {
+            if (ref $asset eq 'ARRAY') {
+                $asset = $self->lazy_load_asset($asset);
+            }
+            my $re   = $asset->{handle} || ".";
             my $test = $re =~ m!https?://! ? $uri : $uri->path_query;
             if ($test =~ /$re/i) {
-                $self->log(debug => "Handle $uri with plugin " . $plugin->site_name);
-                return $plugin if $first;
-                push @plugins, $plugin;
+                $self->log(debug => "Handle $uri with asset " . $asset->domain);
+                return $asset if $first;
+                push @assets, $asset;
             }
         }
     }
 
     return if $first;
-    return @plugins;
+    return @assets;
+}
+
+sub lazy_load_asset {
+    my($self, $asset) = @_;
+
+    Plagger->context->log(debug => "Lazy loading $asset->[1]");
+    my($callback, @args) = @$asset;
+    return $callback->(@args);
+}
+
+sub fetch_content {
+    my($self, $url) = @_;
+
+    my $ua  = Plagger::UserAgent->new;
+    my $res = $ua->fetch($url, $self, { NoNetwork => 24 * 60 * 60 });
+    return if !$res->status && $res->is_error;
+
+    return decode_content($res);
 }
 
 1;

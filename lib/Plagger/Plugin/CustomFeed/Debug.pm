@@ -3,21 +3,32 @@ use strict;
 use warnings;
 use base qw (Plagger::Plugin);
 
-our $VERSION = 0.01;
+use Scalar::Util qw(blessed);
 
 sub register {
     my ($self, $context) = @_;
     $context->register_hook(
         $self,
         'subscription.load' => \&load,
+        'feed.discover'     => \&handle,
     );
 }
 
 sub load {
     my ($self, $context) = @_;
     my $feed = Plagger::Feed->new;
-    $feed->aggregator(sub { $self->aggregate(@_) });
+    $feed->url("debug:$self");
     $context->subscription->add($feed);
+}
+
+sub handle {
+    my ($self, $context, $args) = @_;
+
+    if ($args->{feed}->url =~ /^debug:/) {
+        return sub { $self->aggregate(@_) };
+    }
+
+    return;
 }
 
 sub aggregate {
@@ -43,6 +54,8 @@ sub aggregate {
            $encls = [ $encls ] if ref $encls && ref $encls ne 'ARRAY';
 
         for my $enclosure_conf ( @$encls ) {
+            $enclosure_conf = { url => $enclosure_conf }
+                if blessed($enclosure_conf) && $enclosure_conf->isa('URI');
             my $enclosure = Plagger::Enclosure->new;
             $enclosure->$_($enclosure_conf->{$_}) for keys %$enclosure_conf;
             $enclosure->auto_set_type unless defined $enclosure->type;
