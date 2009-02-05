@@ -1,4 +1,4 @@
-Remedie.version = '0.2.0';
+Remedie.version = '0.3.0';
 
 function Remedie() {
   this.initialize();
@@ -22,7 +22,7 @@ Remedie.prototype = {
     this.setupEventListeners();
     this.setupHotKeys();
     this.setupPluginDefaults();
- 
+
     this.loadCollection( this.dispatchAction );
   },
 
@@ -57,43 +57,42 @@ Remedie.prototype = {
     });
 
     // vi like keyborad shortcut.
-    this.installHotKey('h', 'Move to right (next) channel', function(){
+    this.installHotKey('h', 'Move to the right (next) channel', function(){
       if (remedie.current_id)
         location.href = $("#channel-pane .prev-channel").click().attr('href');
       else
         remedie.moveCursorPrev();
     });
-    this.installHotKey('l', 'Move to left (previous) channel', function(){
+    this.installHotKey('l', 'Move to the left (previous) channel', function(){
       if (remedie.current_id)
         location.href = $("#channel-pane .next-channel").click().attr('href');
       else
         remedie.moveCursorNext();
     });
-    this.installHotKey('j', 'Move to next (down) channel (or item)', function(){
+    this.installHotKey('j', 'Move to the next (down) channel (or item)', function(){
       if (remedie.current_id)
         remedie.moveCursorNext()
       else
         remedie.moveCursorDown()
     });
-    this.installHotKey('k', 'Move to previous (up) channel (or item)', function(){
+    this.installHotKey('k', 'Move to the previous (up) channel (or item)', function(){
       if (remedie.current_id)
         remedie.moveCursorPrev()
       else
         remedie.moveCursorUp()
     });
 
-    this.installHotKey('left', 'Move to left channel', function(){
+    this.installHotKey('left', 'Move to the left channel / rewind to the previous video (in playback)', function(){
       if (!remedie.current_id) remedie.moveCursorPrev();
     });
-    this.installHotKey('right', 'Move to right channel / skip to next video (in playback)', function(){
+    this.installHotKey('right', 'Move to the right channel / fast forward to the next video (in playback)', function(){
       if (!remedie.current_id)    remedie.moveCursorNext();
-      if (remedie.isPlayingVideo) remedie.onPlaybackComplete();
     });
-    this.installHotKey('up',   'Move to previous item (up)', function(){
+    this.installHotKey('up',   'Move to the previous item (up)', function(){
       if (remedie.current_id) remedie.moveCursorPrev();
       else                    remedie.moveCursorUp();
     });
-    this.installHotKey('down', 'Move up next item (down)', function(){
+    this.installHotKey('down', 'Move up the next item (down)', function(){
       if (remedie.current_id) remedie.moveCursorNext();
       else                    remedie.moveCursorDown();
     });
@@ -101,7 +100,7 @@ Remedie.prototype = {
     this.installHotKey('o', 'Open channel (or play/close item)', function(){
       if (remedie.current_id) {
         if ( remedie.isPlayingVideo ) {
-          $.unblockUI();
+          Shadowbox.close();
           return false;
         } else {
           var items = $('.channel-item');
@@ -124,8 +123,7 @@ Remedie.prototype = {
               'h2', {}, 'Keyboard shortcuts',
               'hr', {}, null,
               'div', { className: 'keyboard-shortcuts', style: 'text-align: left' }, null,
-              'br', {}, null,
-              'a', { className: 'command-unblock', href: '#' }, 'Close this window'
+              'br', {}, null
           ]);
       var container = $("div.keyboard-shortcuts", message);
       $.each(remedie.hotkeys, function(index, info) {
@@ -135,7 +133,6 @@ Remedie.prototype = {
          }
          container.append('<em>' + key + '</em>: ' + info.desc + '<br/>');
       });
-      message.children("a.command-unblock").click($.unblockUI);
       $.blockUI({
         message: message,
         css: { top: '50px' }
@@ -172,7 +169,18 @@ Remedie.prototype = {
       shadow:            true
     });
 
-    $(".blockOverlay").live('dblclick', $.unblockUI);
+    $.jGrowl.defaults.closer = false;
+    $.jGrowl.defaults.speed  = 1000;
+
+    $(".blockOverlay").live('click', $.unblockUI);
+    $("#shadowbox_overlay").live('dblclick', Shadowbox.close);
+    $(".show-all-items").live('click', function() {
+      $.blockUI();
+      remedie.showChannel(remedie.currentChannel(), { all: true });
+    });
+    $(".show-unwatched-items").live('click', function() {
+      remedie.showChannel(remedie.currentChannel(), { unwatched: true, all: true });
+    });
   },
 
   setupMenuActions: function() {
@@ -189,9 +197,12 @@ Remedie.prototype = {
   },
 
   setupEventListeners: function() {
-    $(document).bind('remedie-channel-updated', function(ev, channel) {
-      remedie.redrawChannel(channel);
-      remedie.redrawUnwatchedCount(channel);
+    $(document).bind('remedie-channel-updated', function(ev, args) {
+      remedie.redrawChannel(args.channel);
+      remedie.redrawUnwatchedCount(args.channel);
+      remedie.renderUnwatchedBadges();
+      if (!args.skip_notification)
+        remedie.notifyNewItems(args.channel, args.prev);
     });
     $(document).bind('remedie-channel-ondisplay', function(ev, channel) {
       document.title = 'Remedie: ' + channel.name;
@@ -212,6 +223,23 @@ Remedie.prototype = {
       remedie.current_id = null;
       remedie.items = [];
     });
+    $(document).bind('remedie-item-loaded', function(ev, args) {
+      var item = args.item;
+      if (item.is_unwatched)
+        remedie.markItemAsWatched(item);
+
+      remedie.isPlayingVideo  = true;
+      remedie.lastPlayedVideo = item;
+      remedie.cursorPos = $('.channel-item').index($('#channel-item-' + item.id));
+
+      // make Shadowbox title header a link to the item page
+      if (item.props.link) {
+        var title = $('#shadowbox_title_inner').html();
+        $('#shadowbox_title_inner').empty().createAppend(
+          'a', { href: item.props.link, target: '_blank' }, title
+        );
+      }
+    });
   },
 
   installHotKey: function(key, description, callback, always) {
@@ -229,7 +257,10 @@ Remedie.prototype = {
     args = location.hash.split('/');
     if (args[0] == '#channel') {
       if (this.channels[args[1]])
-        this.showChannel( this.channels[args[1]] );
+        var opts = {};
+        if (args[2] == 'all')       opts.all = 1;
+        if (args[2] == 'unwatched') opts.unwatched = 1;
+        this.showChannel( this.channels[args[1]], opts );
     } else if (args[0] == '#subscribe') {
       this.newChannelDialog(decodeURIComponent(args[1]));
     }
@@ -250,6 +281,23 @@ Remedie.prototype = {
     this.unblockCallbacks = [];
   },
 
+  // TODO: eventually this notification should be triggered on the server side and broadcast over comet
+  notifyNewItems: function(channel, prev) {
+    var diff = channel.unwatched_count - prev.unwatched_count;
+    if (prev != undefined && diff > 0) {
+      var item = channel.first_item;
+      if (item) {
+        var icon;
+        var thumb = item.props.thumbnail || channel.props.thumbnail;
+        if (thumb != null && thumb.url)
+          icon = thumb.url;
+        var msg = item.name;
+        if (diff > 1) msg += " (" + (diff - 1) + " more)";
+        $.jGrowl(msg, { icon: icon, header: channel.name, life: 5000 });
+      }
+    }
+  },
+
   launchVideoPlayer: function(item, player, fullscreen, iframe) {
     var channel = this.channels[ item.channel_id ];
     var url;
@@ -258,7 +306,7 @@ Remedie.prototype = {
     } else {
       url = item.ident;
     }
-      
+
     if (iframe) {
       var form = $("<form></form>").attr("target", "upload-frame")
         .attr("method", "post").ajaxSubmit({
@@ -287,27 +335,75 @@ Remedie.prototype = {
   },
 
   isPlayingVideo: false,
+  lastPlayedVideo: null,
 
   playVideoInline: function(item, player, opts) {
     if (!opts) opts = {};
-    this.isPlayingVideo = true;
+
+    // callback to upgrade {id:id} to the full gallery item for Shadowbox
+    var loadGalleryItem = function(gallery) {
+      var item = remedie.items[gallery.id]
+      var nextItem = remedie.getShadowboxGallery(item, player, opts);
+      var callback;
+      if (perItemCallback = nextItem.onFinish) {
+        callback = function(args) {
+          $.event.trigger('remedie-item-loaded', { item: item });
+          perItemCallback.call(args);
+        };
+      } else {
+        callback = function() { $.event.trigger('remedie-item-loaded', { item: item }) };
+      }
+      $.extend(gallery, nextItem);
+      Shadowbox.applyOptions({ onFinish: callback });
+    };
+
+    if (opts.thisItemOnly || !item.is_unwatched) {
+      this.onPlaybackComplete = Shadowbox.close;
+      Shadowbox.open({ id: item.id }, {
+        gallery: 'gallery' + item.channel_id,
+        onOpen:  loadGalleryItem
+      });
+    } else {
+      this.onPlaybackComplete = function() { setTimeout(function(){ Shadowbox.next() }, 100) };
+      var items = $('.channel-item-unwatched');
+      var curr  = items.index($("#channel-item-title-" + item.id));
+      items = items.slice(curr, items.length);
+      var galleryItems = $.map(items, function(n, i) { return { id: n.id.replace('channel-item-title-', '') } });
+      Shadowbox.open(galleryItems, {
+        gallery:  'gallery' + item.channel_id,
+        onChange: loadGalleryItem,
+        onOpen:   loadGalleryItem
+      });
+    }
+
+    Shadowbox.applyOptions({
+      onClose: function() {
+        remedie.isPlayingVideo = false;
+        // Hmm, need to call this twice to make it completely reset
+        Shadowbox.applyOptions({ onFinish: null, onOpen: null, onChange: null });
+        Shadowbox.applyOptions({ onFinish: null, onOpen: null, onChange: null });
+      }
+    });
+  },
+
+  getShadowboxGallery: function(item, player, opts) {
+    if (!opts) opts = {};
     var channel_id = item.channel_id;
     var id   = item.id;
     var url  = item.ident;
 
-    // TODO should this be set with other actions (e.g. Mark as read) as well with events?
-    this.cursorPos = $('.channel-item').index($('#channel-item-' + item.id));
-
     var ratio;
     var thumbnail;
-    var offset = {};
     if (item.props.link && url.match(/nicovideo\.jp/)) {
       // XXX
       player = 'Web';
       ratio = 3/4;
-      offset.height = 24;
     } else if (item.props.embed) {
-      player = 'Web';
+      if (/shockwave/i.test(item.props.type)) {
+        player = 'Web';
+      } else if (/x?html/.test(item.props.type)) {
+        player = 'iframe';
+      }
       if (item.props.embed.width && item.props.embed.height) {
         ratio  = item.props.embed.height / item.props.embed.width;
       } else {
@@ -322,10 +418,9 @@ Remedie.prototype = {
         ratio = (item.props.height && item.props.width)
           ? (item.props.height / item.props.width) : 9/16; // TODO
       }
-      offset.height = 18;
     }
 
-    var res    = RemedieUtil.calcWindowSize($(window).width()-100, $(window).height()-80, ratio);
+    var res    = RemedieUtil.calcWindowSize($(window).width()-100, $(window).height()-94, ratio);
     var width  = res.width;
     var height = res.height;
 
@@ -349,166 +444,144 @@ Remedie.prototype = {
       });
     }
 
-    if (offset.width)  width  += offset.width;
-    if (offset.height) height += offset.height;
-
-    if (item.is_unwatched && !opts.thisItemOnly) {
-      var items = $('.channel-item-unwatched');
-      var curr  = items.index($("#channel-item-title-" + item.id));
-      this.onPlaybackComplete = function() {
-        if (curr > -1 && items[curr+1] != undefined) {
-          var id = items[curr+1].id.replace('channel-item-title-', '');
-          $.unblockUI({ fadeOut: 10, onUnblock: function(){ remedie.playVideoInline(remedie.items[id]) } });
-        } else {
-          $.unblockUI();
-        }
-      };
-    } else {
-      this.onPlaybackComplete = $.unblockUI;
-    }
-
     if (player == 'Web') {
       if (item.props.embed.script) {
-         $('head').append("<script>" + item.props.embed.script + "</script>");
-      } else {
-        var s1 = new SWFObject(item.props.embed.url, 'player-' + item.id, width, height, '9');
-        s1.addParam('allowfullscreen','true');
-        s1.addParam('allowscriptaccess','always');
-//        s1.addVariable('bitrate', '700000'); // Hulu
-        s1.write('embed-player');
-
-        // Event handling for YouTube player. This might be better pluggable
-        // http://code.google.com/apis/youtube/js_api_reference.html
-        $(document).bind('remedie-player-ready-youtube', function(ev, id){ // id is undefined for some reason
-          var player = document.getElementById('player-'+item.id);
-          player.addEventListener('onStateChange', 'function(newstate){if(newstate==0) remedie.onPlaybackComplete()}');
-          $(document).unbind('remedie-player-ready-youtube');
-        });
-      }
-    } else if (player == 'QuickTime') {
-        var s1 = new QTObject(url, 'player-' + id, width,  height);
-        s1.addParam('scale', 'Aspect');
-        s1.addParam('target', 'QuickTimePlayer');
-        s1.addParam('postdomevents', 'true');
-        s1.write('embed-player');
-        document.getElementById('player-' + id).addEventListener('qt_ended', this.onPlaybackComplete, false);
-    } else if (player == 'WMP') {
-        var s1 = new MPObject(url, 'player-' + id, width,  height);
-        s1.addParam("autostart", "1");
-        s1.write('embed-player');
-    } else if (player == 'DivX') {
-        var s1 = new DivXObject(url, 'player-' + id, width,  height);
-        s1.addParam("autostart", "true");
-        s1.addParam("controller", "true");
-        s1.write('embed-player');
-    } else if (player == 'Silverlight') {
-        var elm = document.getElementById("embed-player");
-        var ply = new jeroenwijering.Player(elm, '/static/js/wmvplayer/wmvplayer.xaml', {
-          file: url,
-          width: width,
-          height: height,
-          link: item.props.link
-//          autostart: true
-        });
-
-        var setupSilverlight = function(ply) {
-          if (ply.view) {
-            ply.addListener('STATE', function(ost,nst){if (nst == 'Completed') remedie.onPlaybackComplete()});
-            ply.sendEvent('PLAY');
-          } else {
-            // not ready yet
-            var _this = arguments.callee;
-            setTimeout(function(){_this(ply)}, 100)
+        return {
+          player:  'html',
+          title:   item.name,
+          height:  height,
+          width:   width,
+          content: '<div id="embed-player"></div>',
+          onFinish: function() {
+            $('head').append("<script>" + item.props.embed.script + "</script>");
           }
         };
-        setupSilverlight(ply);
+      } else {
+        return {
+          player:  'html',
+          title:   item.name,
+          height:  height,
+          width:   width,
+          content: '<div id="embed-player"></div>',
+          onFinish: function() {
+            var s1 = new SWFObject(item.props.embed.url, 'player-' + item.id, width, height, '9');
+            s1.addParam('allowfullscreen','true');
+            s1.addParam('allowscriptaccess','always');
+            s1.write('embed-player');
 
-        // space key to play and pause the video
-        $(document).bind('keydown', 'space', function(){
-          if (ply.view) ply.sendEvent("PLAY");
-          return false;
-        });
-        this.runOnUnblock(function(){$(document).unbind('keydown', 'space', function(){})});
+            // TODO: This might be better pluggable
+            // Handle YouTube callback
+            // http://code.google.com/apis/youtube/js_api_reference.html
+            $(document).bind('remedie-player-ready-youtube', function(ev, id){ // id is undefined for some reason
+              var player = document.getElementById('player-'+item.id);
+              player.addEventListener('onStateChange', 'function(newstate){if(newstate==0) remedie.onPlaybackComplete()}');
+              $(document).unbind('remedie-player-ready-youtube');
+            });
+          }
+        };
+      }
+    } else if (player == 'iframe') {
+      return {
+        player:  'iframe',
+        title:   item.name,
+        height:  height,
+        width:   width,
+        content: item.props.embed.url
+      };
+    } else if (player == 'QuickTime') {
+      return {
+        player:  'qt',
+        title:   item.name,
+        height:  height,
+        width:   width,
+        content: url,
+        onFinish: function() {
+          document.getElementById('shadowbox_content').addEventListener('qt_ended', remedie.onPlaybackComplete, false);
+        }
+      };
+    } else if (player == 'WMP') {
+      return {
+        player:  'html', // TODO make it 'wmp' for Shadowbox
+        title:   item.name,
+        height:  height,
+        width:   width,
+        content: '<div id="embed-player"></div>',
+        onFinish: function() {
+          var s1 = new MPObject(url, 'player-' + id, width,  height);
+          s1.addParam("autostart", "1");
+          s1.write('embed-player');
+        }
+      };
+    } else if (player == 'DivX') {
+      return {
+        player:  'html',
+        title:   item.name,
+        height:  height,
+        width:   width,
+        content: '<div id="embed-player"></div>',
+        onFinish: function() {
+          var s1 = new DivXObject(url, 'player-' + id, width,  height);
+          s1.addParam("autostart", "true");
+          s1.addParam("controller", "true");
+          s1.write('embed-player');
+        }
+      };
+    } else if (player == 'Silverlight') {
+      return {
+        player:  'html',
+        title:   item.name,
+        height:  height,
+        width:   width,
+        content: '<div id="embed-player"></div>',
+        onFinish: function() {
+          var elm = document.getElementById("embed-player");
+          var ply = new jeroenwijering.Player(elm, '/static/js/wmvplayer/wmvplayer.xaml', {
+            file: url,
+            width: width,
+            height: height - 18,
+            link: item.props.link
+          });
+          (function(ply) {
+            if (ply.view) {
+              ply.addListener('STATE', function(ost,nst){if (nst == 'Completed') remedie.onPlaybackComplete()});
+              ply.sendEvent('PLAY');
+            } else {
+              // not ready yet
+              var _this = arguments.callee;
+              setTimeout(function(){_this(ply)}, 100)
+            }
+          })(ply);
+        }
+      };
     } else if (player == 'Flash') {
-      var s1 = new SWFObject('/static/player.swf', 'player-' + id, width, height, '9');
-      s1.addParam('allowfullscreen','true');
-      s1.addParam('allowscriptaccess','always');
-      s1.addVariable('autostart', 'true');
+      var file, streamer;
       if (url.match(/^rtmp[ts]?:/)) {
         var urls = url.split('/');
-        file = urls.pop();
-        s1.addVariable('file', encodeURIComponent(file));
-        s1.addVariable('streamer', encodeURIComponent(urls.join('/')));
-        s1.addVariable('type', 'video');
+        file = encodeURIComponent(urls.pop());
+        streamer = encodeURIComponent(urls.join('/'));
       } else {
-        s1.addVariable('file', encodeURIComponent(url));
+        file = encodeURIComponent(url);
       }
-      if (thumbnail)
-        s1.addVariable('image', encodeURIComponent(thumbnail));
-      if (item.props.link)
-        s1.addVariable('link', encodeURIComponent(item.props.link));
-      s1.write('embed-player');
-
-      $(document).bind('remedie-player-ready', function(ev, id){
-        var player = document.getElementById(id);
-        // JW player needs a string representatin for callbacks
-        player.addViewListener('STOP', '$.unblockUI');
-        player.addModelListener('STATE', 'function(ev){if (ev.newstate=="COMPLETED") remedie.onPlaybackComplete()}');
-        $(document).unbind('remedie-player-ready');
-      });
-
-      // space key to play and pause the video
-      $(document).bind('keydown', 'space', function(){
-        document.getElementById('player-'+id).sendEvent("PLAY");
-        return false;
-      });
-      this.runOnUnblock(function(){$(document).unbind('keydown', 'space', function(){})});
+      return {
+        player:   'flv',
+        title:    item.name,
+        height:   height,
+        width:    width,
+        content:  file,
+        streamer: streamer,
+        link:     item.props.link,
+        image:    thumbnail,
+        onFinish: function() {
+          $(document).bind('remedie-player-ready', function(ev, id){
+            var player = document.getElementById(id);
+            // JW player needs a string representatin for callbacks
+            player.addViewListener('STOP', 'Shadowbox.close');
+            player.addModelListener('STATE', 'function(ev){if (ev.newstate=="COMPLETED") remedie.onPlaybackComplete()}');
+            $(document).unbind('remedie-player-ready');
+          });
+        }
+      };
     }
-
-    this.runOnUnblock(function(){
-      $('#embed-player').children().remove();
-      remedie.isPlayingVideo = false;
-    });
-
-    $('#embed-player').append(
-      $('<img/>').attr('class', 'closebox').attr('src', "/static/images/closebox.png").click($.unblockUI)
-    );
-
-    if (player == 'Flash' || player == 'Silverlight') {
-      $('#embed-player').append(
-        $('<div></div>').attr('class', 'embed-player-footer').append(
-           $("<span></span>").attr("class", "embed-player-item-title").text(item.name), "&nbsp;&nbsp;",
-           $("<span></span>").attr("class", "embed-player-channel-title").text(this.channels[item.channel_id].name)
-        ).css({opacity:0.6})
-      );
-    }
-
-    var events = [];
-    $('#embed-player').hover(
-      function(){
-        $.each(events, function(idx, id) { clearTimeout(id) });
-        events = [];
-        $(".closebox, .embed-player-footer", this).show();
-      },
-      function(){
-        var _this = this;
-        var id = setTimeout(function(){
-          $(".closebox, .embed-player-footer", _this).fadeOut(500)
-        }, 1500);
-        events.push(id);
-      }
-    );
-
-    this.markItemAsWatched(item); // TODO setTimeout?
-
-    $.blockUI({
-      message: $('#embed-player'),
-      css: { top:  ($(window).height() - height) / 2 + 'px',
-             left: ($(window).width()  - width) / 2 + 'px',
-             width:  width + 'px', height: 'auto',
-             opacity: 1, padding: 0, border: '1px solid #fff', backgroundColor: '#fff',
-             '-webkit-border-radius': 0, '-moz-border-radius': 0 }
-      });
   },
 
   defaultPlayerFor: function(type) {
@@ -520,7 +593,7 @@ Remedie.prototype = {
         if (type.match(/wmv/i)) {
           player = 'Silverlight';
         } else {
-          player = 'QuickTime';
+          player = 'QuickTime'; // TODO make it 'f4m' for Shadowbox
         }
       } else {
         player = 'WMP';
@@ -636,9 +709,31 @@ Remedie.prototype = {
     })
   },
 
+  embedCooliris: function(channel) {
+    var res    = RemedieUtil.calcWindowSize($(window).width()-100, $(window).height()-80, 9/16);
+    var width  = res.width;
+    var height = res.height;
+
+    Shadowbox.open({
+      player:  'html',
+      height:  height,
+      width:   width,
+      content: '<div id="embed-player"></div>'
+    }, {
+      onFinish: function() {
+        var embed = new SWFObject("http://apps.cooliris.com/embed/cooliris.swf", 'cooliris-' + channel.id, width, height, '9');
+        embed.addParam('allowfullscreen', 'true');
+        embed.addParam('allowscriptaccess', 'always');
+        embed.addVariable('feed', $("#gallery").attr('href'));
+        embed.write('embed-player');
+      }
+    });
+  },
+
   markAllAsWatched: function(channel, showChannelView) {
     this.updateStatus({ id: channel.id, status: 'watched' }, function() {
-      if (showChannelView) remedie.showChannel(channel);
+      if (showChannelView && remedie.current_id == channel.id)
+        remedie.showChannel(channel);
     });
   },
 
@@ -662,7 +757,6 @@ Remedie.prototype = {
     $('.unwatched-count-' + channel.id).each(function(){
       $(this).text(count);
     });
-    this.renderUnwatchedBadges();
     if (this.current_id) {
       document.title = 'Remedie: ' + channel.name;
       if (channel.unwatched_count) document.title += " (" + channel.unwatched_count + ")";
@@ -678,9 +772,10 @@ Remedie.prototype = {
       async: (obj.sync ? false : true),
       success: function(r) {
         if (r.success) {
+          var o = remedie.channels[r.channel.id];
           remedie.channels[r.channel.id] = r.channel;
           callback.call();
-          $.event.trigger('remedie-channel-updated', r.channel);
+          $.event.trigger('remedie-channel-updated', { channel: r.channel, prev: o, skip_notification: true });
         } else {
           alert(r.error);
         }
@@ -754,9 +849,12 @@ Remedie.prototype = {
 
           remedie.channels[r.channel.id] = r.channel;
           remedie.renderChannelList(r.channel, $("#collection"));
+          $(document).bind('remedie-channel-ondisplay', function(){
+            remedie.manuallyRefreshChannel(r.channel);
+            remedie.resetCursorPos();
+            $(document).unbind('remedie-channel-ondisplay', arguments.callee);
+          });
           remedie.showChannel(r.channel);
-          remedie.manuallyRefreshChannel(r.channel);
-          remedie.resetCursorPos();
         } else {
           alert(r.error);
         }
@@ -771,7 +869,7 @@ Remedie.prototype = {
     $.each(this.channels, function(idx, c) {
       if (c != undefined) {
         array.push(c);
-        if (c.id == channel.id) 
+        if (c.id == channel.id)
           want = array.length - 1 + offset;
       }
     });
@@ -781,14 +879,19 @@ Remedie.prototype = {
     return array[want];
   },
 
-  showChannel: function(channel) {
-    location.href = "#channel/" + channel.id;
+  showChannel: function(channel, opts) {
+    if (!opts) opts = {};
+    var currentStateURI = "#channel/" + channel.id;
+    if (opts.unwatched) currentStateURI += '/unwatched';
+    else if (opts.all)  currentStateURI += '/all'; // unwatched includes all
+    location.href = currentStateURI;
     $.ajax({
       url: "/rpc/channel/show",
       type: 'get',
-      data: { id: channel.id },
+      data: { id: channel.id, limit: (opts.all ? 0 : 50), status: (opts.unwatched ? [ 'new', 'downloaded' ] : 0) },
       dataType: 'json',
       success: function(r) {
+        $.unblockUI();
         $("#channel-pane").children().remove();
         var channel = r.channel;
         $.event.trigger("remedie-channel-ondisplay", channel);
@@ -819,9 +922,10 @@ Remedie.prototype = {
               'div', { className: 'channel-header-data' }, [
                 'a', { href: channel.ident, target: "_blank" }, RemedieUtil.mangleURI(channel.ident).trimChars(100),
                 'br', {}, null,
-                'span', {}, r.items.length + ' items, ' +
-                  '<span class="unwatched-count-' + channel.id + '">' + 
-                  (channel.unwatched_count ? channel.unwatched_count : 0) + '</span> unwatched'
+                'span', {}, '<a class="show-all-items">' + r.channel.total + ' items' + '</a>' +
+                  ', ' +
+                  '<a class="show-unwatched-items"><span class="unwatched-count-' + channel.id + '">' + 
+                  (channel.unwatched_count ? channel.unwatched_count : 0) + '</span> unwatched</a>'
               ],
               'p', { className: 'channel-header-description' }, channel.props.description
             ],
@@ -844,7 +948,7 @@ Remedie.prototype = {
           $("#channel-items").createAppend(
            'div', { className: 'channel-item channel-item-selectable', id: 'channel-item-' + item.id  }, [
              'div', { className: 'item-thumbnail' }, [
-               'a', { className: 'channel-item-clickable', href: item.ident, id: "item-thumbnail-" + item.id }, [
+               'a', { className: 'channel-item-clickable', href: item.ident, id: "item-thumbnail-" + item.id, rel: "shadowbox[gallery" + item.channel_id + "]" }, [
                  'img', { id: 'item-thumbnail-image-' + item.id,
                           src: thumbnail, alt: item.name, style: 'width: 128px' }, null
                ]
@@ -871,6 +975,8 @@ Remedie.prototype = {
            RemedieUtil.layoutImage($("#item-thumbnail-image-" + item.id), item.props.thumbnail.url, 128, 96);
        });
 
+//       Shadowbox.setup();
+
        $(".channel-header")
         .contextMenu("channel-context-menu", {
           bindings: {
@@ -878,6 +984,7 @@ Remedie.prototype = {
             channel_context_clear_stale:  function(){ remedie.manuallyRefreshChannel(channel, true) },
             channel_context_mark_watched: function(){ remedie.markAllAsWatched(channel, true) },
             channel_context_cooliris:     function(){ PicLensLite.start() },
+            channel_context_cooliris_swf: function(){ remedie.embedCooliris(channel) },
             channel_context_remove:       function(){ remedie.removeChannel(channel) }
           }
         });
@@ -931,7 +1038,7 @@ Remedie.prototype = {
                if (item.props.download_path && !item.props.track_id)
                  el.createAppend('li', { id: 'item_context_cancel_download' }, 'Remove downloaded file');
              }
-        
+
              if (item.is_unwatched) {
                el.createAppend('li', { id: 'item_context_watched' }, 'Mark as watched');
              } else {
@@ -964,8 +1071,9 @@ Remedie.prototype = {
           .hover(function(){
             if (!remedie.items[item.id].props.track_id) {
               $(this).prepend($("<div/>").attr('id', 'play-button-'+item.id)
-                .addClass("channel-item-play").corners("10px transparent").css({opacity:0.6})
-                .append($("<a/>").attr("href", "javascript:void 0").text("PLAY").click(function(){$(this).parent().next().trigger('click')})));
+                .addClass("channel-item-play")
+                .append($("<a/>").attr("href", "javascript:void 0").text("PLAY").click(function(){$(this).parent().next().trigger('click')}))
+                .corners("10px transparent").css({opacity:0.6}));
             }
           }, function(){
             $('.channel-item-play').remove();
@@ -978,6 +1086,12 @@ Remedie.prototype = {
           } catch(e) { alert(e) };
           return false;
         });
+
+        if (channel.total > r.items.length) {
+          $("#channel-items").createAppend('div', { className: 'show-more-items' }, [
+            'a', { className: 'show-all-items' }, 'Showing only ' + r.items.length + ' items. Click here to show all items'
+          ]);
+        }
 
         remedie.toggleChannelView(true);
       },
@@ -1007,12 +1121,13 @@ Remedie.prototype = {
       success: function(r) {
         $.unblockUI();
         if (r.success) {
+          var o = remedie.channels[r.channel.id];
           remedie.channels[r.channel.id] = r.channel;
-          $.event.trigger('remedie-channel-updated', r.channel);
+          $.event.trigger('remedie-channel-updated', { channel: r.channel, prev: o });
           if (refreshView)
             remedie.showChannel(r.channel);
         } else {
-          $.event.trigger('remedie-channel-updated', channel); // Fake updated Event to cancel animation
+          $.event.trigger('remedie-channel-updated', { channel: channel }); // Fake updated Event to cancel animation
           alert(r.error);
         }
       }
@@ -1056,6 +1171,7 @@ Remedie.prototype = {
           remedie.renderChannelList(channel, $("#collection"));
           remedie.redrawUnwatchedCount(channel);
         });
+        remedie.renderUnwatchedBadges();
         remedie.resetCursorPos();
         $.unblockUI();
         if (callback)
@@ -1156,7 +1272,7 @@ Remedie.prototype = {
             }
           });
         }
-      },
+      }
     });
   },
 
@@ -1203,13 +1319,13 @@ Remedie.prototype = {
     if (document.documentElement.getBoundingClientRect) { // IE 
       var box = e.getBoundingClientRect();
       var owner = e.ownerDocument;
-      pos.x = box.left + Math.max(owner.documentElement.scrollLeft, owner.body.scrollLeft) - 2; 
-      pos.y = box.top  + Math.max(owner.documentElement.scrollTop,  owner.body.scrollTop) - 2
+      pos.x = box.left + Math.max(owner.documentElement.scrollLeft, owner.body.scrollLeft) - 2;
+      pos.y = box.top  + Math.max(owner.documentElement.scrollTop,  owner.body.scrollTop) - 2;
     } else if(document.getBoxObjectFor) { //Firefox
       pos.x = document.getBoxObjectFor(e).x;
       pos.y = document.getBoxObjectFor(e).y;
     } else {
-      do { 
+      do {
         pos.x += e.offsetLeft;
         pos.y += e.offsetTop;
       } while (e = e.offsetParent);
@@ -1310,14 +1426,12 @@ Remedie.prototype = {
 
   showAboutDialog: function() {
       var message = $('<div/>').createAppend(
-           'div', { id: "about-dialog" }, [
+          'div', { id: "about-dialog" }, [
               'h2', {}, 'Remedie Media Center ' + Remedie.version,
               'p', {}, [
-                  'a', { href: "http://code.google.com/p/remedie/", target: "_blank" }, 'Source code'
-              ],
-              'a', { className: 'command-unblock', href: location.href }, 'Close this window'
-          ])
-      message.children("a.command-unblock").click($.unblockUI);
+                  'a', { href: "http://remediecode.org/", target: "_blank" }, 'Get source code'
+              ]
+          ]);
       $.blockUI({ message: message });
       return false;
   }

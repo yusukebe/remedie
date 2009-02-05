@@ -36,7 +36,7 @@ sub aggregate {
 
     my $res = $args->{feed}->source or return;
     my $feed_url = Plagger::FeedParser->discover($res);
-    if ($args->{feed}->url eq $feed_url) {
+    if ($res->uri eq $feed_url) {
         return $self->handle_feed($feed_url, \$res->content, $args->{feed});
     } elsif ($feed_url && !$self->conf->{no_discovery}) {
         $res = $self->fetch_content($feed_url) or return;
@@ -115,9 +115,8 @@ sub handle_feed {
         $entry->title(_u($e->title));
         $entry->author(_u($e->author));
 
-        my $category = $e->category;
-           $category = [ $category ] if $category && (!ref($category) || ref($category) ne 'ARRAY');
-        $entry->tags([ map _u($_), @$category ]) if $category;
+        my @category = $e->category;
+        $entry->tags([ map _u($_), @category ]) if @category;
 
         # XXX XML::Feed doesn't support extracting atom:category yet
         if ($remote->format eq 'Atom' && $e->{entry}->can('categories')) {

@@ -14,9 +14,15 @@ __PACKAGE__->json_encoded_columns('props');
 
 sub items {
     my $self = shift;
+    my %opts = @_;
+
+    my @query = (channel_id => $self->id);
+    push @query, status => $opts{status} if $opts{status} && @{$opts{status}} > 0;
+
     return Remedie::DB::Item::Manager->get_items(
-       query => [ channel_id => $self->id ],
+       query => \@query,
        sort_by => 'id DESC',
+       $opts{limit} ? (limit => $opts{limit}) : (),
    );
 }
 
@@ -26,6 +32,13 @@ sub count_by_status {
 
     return Remedie::DB::Item::Manager->get_items_count(
         query => [ channel_id => $self->id, status => \@status ],
+    );
+}
+
+sub total {
+    my $self = shift;
+    return Remedie::DB::Item::Manager->get_items_count(
+        query => [ channel_id => $self->id ],
     );
 }
 
@@ -46,7 +59,7 @@ sub first_item {
 
 sub columns_to_serialize {
     my $self = shift;
-    return qw( unwatched_count first_item );
+    return qw( unwatched_count first_item total );
 }
 
 package Remedie::DB::Channel::Manager;
