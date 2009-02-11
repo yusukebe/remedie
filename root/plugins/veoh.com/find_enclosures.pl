@@ -2,16 +2,15 @@
 # TODO veoh rss feed has .mp4 file enclosures but it doesn't work with Flash player
 sub init {
     my $self = shift;
-    $self->{handle} = "(?:/browse/videos/|/collection/).*watch/v.*";
+    $self->{handle} = "(?:/videos/|/browse/videos/|/collection/).*(?:watch/)*v.*";
 }
-
 
 sub find {
     my ($self, $args) = @_;
 
     my $uri = URI->new($args->{url});
 
-    my $id = ($uri->path =~ m!/watch/(v\w+)!)[0]
+    my $id = ($uri->path =~ m!/(?:videos|watch)/(v\w+)!)[0]
         or return;
 
     my $enclosure = Plagger::Enclosure->new;
